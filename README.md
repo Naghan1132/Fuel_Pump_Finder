@@ -1,7 +1,8 @@
 # Fuel Pump Finder (France Data - every 10 minutes)
 
-![home](/img/accueil.png)
 ![research](/img/recherche.png)
+![home](/img/accueil.png)
+
 
 Fuel Pump Finder is a web application designed to help users find nearby gas stations and compare fuel prices. It provides features such as:
 
