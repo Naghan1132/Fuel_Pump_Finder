@@ -5,7 +5,6 @@ import folium
 from folium.plugins import MarkerCluster
 from streamlit_folium import folium_static
 from streamlit_folium import st_folium
-import streamlit_folium
 from geopy.geocoders import Nominatim
 import osmnx as ox
 import networkx as nx
@@ -18,6 +17,19 @@ from geopy.distance import geodesic
 import geocoder
 import requests
 import numpy as np
+from streamlit_geolocation import streamlit_geolocation
+
+
+def get_user_location():
+    # Obtenir les coordonnées de la localisation de l'utilisateur
+    location = streamlit_geolocation()
+    lat = location["latitude"]
+    lon = location["longitude"]
+    if lat != None and lon != None:
+        return (lat,lon)
+    else:
+        return None
+
 
 # Fonction pour géocoder une adresse et obtenir ses coordonnées
 def geocoder_adresse(adresse):
@@ -29,22 +41,35 @@ def geocoder_adresse(adresse):
         return None
 
 
+def afficher_adresse(lat, lon):
+    geolocator = Nominatim(user_agent="my_geocoder")
+    location = geolocator.reverse((lat, lon))
+    return location.address
+
+def get_nearest_pump(coord_reference, df,rayon_max,carburant):
+    distances = []
+    for index, row in df.iterrows():
+        coord_pump = (row['latitude'], row['longitude'])
+        distance_km = geodesic(coord_reference, coord_pump).kilometers
+        type_carburant = carburant+"_prix"
+
+        if distance_km <= rayon_max:
+            distances.append((distance_km, row['adresse'], row[type_carburant], coord_pump,row['ville']))
+    if distances:
+        return distances
+    else:
+        return None
+
+
 
 # Fonction pour charger les données depuis la base SQLite
 def charger_donnees(carburant):
     # Connexion à la base SQLite
     conn = sqlite3.connect("data.db")
     
-    # Charger les données dans un DataFrame pandas
-    # if departement == "Tous les départements":
-    #     query = "SELECT * FROM prix_carburants"
-    # else:
-    #     query = f"SELECT * FROM prix_carburants WHERE departement = ? AND {carburant}_prix IS NOT NULL"
-    
     query = f"SELECT * FROM prix_carburants WHERE {carburant}_prix IS NOT NULL"
 
     # Exécution de la requête SQL avec les paramètres
-    #df = pd.read_sql_query(query, conn, params=(departement,))
     df = pd.read_sql_query(query, conn)
 
     # Fermer la connexion à la base de données
@@ -87,10 +112,6 @@ def update_data():
         else:
             st.write("Erreur lors du refresh des données")
 
-def get_user_location():
-    # Obtenir les coordonnées de la localisation de l'utilisateur
-    g = geocoder.ip('me')
-    return g.latlng if g else None
 
 
 def recherche():
@@ -103,7 +124,6 @@ def recherche():
         #Charger les données en fonction des filtres sélectionnés
         donnees = charger_donnees(carburant_selectionne)
     
-
     with col2:
         user_location = st.radio("Sélectionnez la méthode de localisation :", ("Utiliser la localisation automatique", "Entrer une adresse manuellement"))
 
@@ -111,6 +131,7 @@ def recherche():
     adresse_utilisateur = None
 
     if user_location == "Utiliser la localisation automatique":
+        #  check si il a accepté la loc
         user_coords = get_user_location()
         if user_coords:
             adresse_utilisateur = afficher_adresse(user_coords[0], user_coords[1])
@@ -131,8 +152,6 @@ def recherche():
 
 
 def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
-
-    #st.write("Nombre de stations dans la recherche : ", df.shape[0])
     
     m = folium.Map(location=[48.8566, 2.3522], zoom_start=5)
 
@@ -151,18 +170,14 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
     near_point_destination = None
 
     if coords_adresse:
-        
         all_pump = get_nearest_pump(coords_adresse, df,rayon_maximal,carburant)
         nearest_pump = min(all_pump)
 
-        near_dist, near_address,near_carburant,near_point_destination = nearest_pump
-
-        folium.Marker(location=[coords_adresse[0], coords_adresse[1]], popup='Point de départ', icon=folium.Icon(color='green')).add_to(m)
-        folium.Marker(location=[near_point_destination[0], near_point_destination[1]], popup='Station la plus proche', icon=folium.Icon(color='red')).add_to(m)
+        near_dist, near_address,near_carburant,near_point_destination,near_ville = nearest_pump
         
-
         # Parcourir le DataFrame et ajouter des marqueurs pour chaque station
         for item in all_pump:
+            ville = item[4]
             coord_station = item[3]
             prix_gazole = item[2]
             adresse = item[1]
@@ -174,7 +189,7 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
                 min_coords = coord_station
                 min_dist = dist
 
-            # pour ne pas repasser 2 fois sur la plus proche
+            # pour ne pas repasser 2 fois sur la station la plus proche
             if coord_station != (near_point_destination[0], near_point_destination[1]):
                 lat_station, lon_station = coord_station
                 popup_text = f"Adresse: {adresse}<br>Prix: {prix_gazole}"
@@ -188,19 +203,21 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
         # Afficher station la moins chère
         lat_min,long_min = min_coords
         folium.Marker(location=[lat_min, long_min], popup='Station la moins chère', icon=folium.Icon(color='pink')).add_to(m)
+        folium.Marker(location=[coords_adresse[0], coords_adresse[1]], popup='Vous êtes içi', icon=folium.Icon(color='green')).add_to(m)
+        folium.Marker(location=[near_point_destination[0], near_point_destination[1]], popup='Station la plus proche', icon=folium.Icon(color='red')).add_to(m)
       
 
     col1, col2 = st.columns(2)  # Diviser en deux colonnes
 
     with col1:
         with st.expander("Informations sur la station la moins chère"):
-            st.write("Adresse :world_map: :", min_address)
+            st.write("Adresse :world_map: :", min_address,", ",ville)
             st.write("Distance :car: :", round(min_dist, 2), "kilomètres")
             st.write("Prix ", carburant, " :euro: :", min_price, " €")
 
     with col2:
         with st.expander("Informations sur la station la plus proche"):
-            st.write("Adresse :world_map: :", near_address)
+            st.write("Adresse :world_map: :", near_address,", ",near_ville)
             st.write("Distance :car: :", round(near_dist, 2), "kilomètres")
             st.write("Prix ", carburant, " :euro: :", near_carburant, " €")
     
@@ -208,25 +225,6 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
     #ajouter le tracer chemin en voiture ... ???
     folium_static(m)
     
-
-def afficher_adresse(lat, lon):
-    geolocator = Nominatim(user_agent="my_geocoder")
-    location = geolocator.reverse((lat, lon))
-    return location.address
-
-def get_nearest_pump(coord_reference, df,rayon_max,carburant):
-    distances = []
-    for index, row in df.iterrows():
-        coord_pump = (row['latitude'], row['longitude'])
-        distance_km = geodesic(coord_reference, coord_pump).kilometers
-        type_carburant = carburant+"_prix"
-
-        if distance_km <= rayon_max:
-            distances.append((distance_km, row['adresse'], row[type_carburant], coord_pump))
-    if distances:
-        return distances
-    else:
-        return None
 
 
 
@@ -345,6 +343,7 @@ def main():
     # Titre de l'application
     st.markdown("<h1 style='text-align: center;'>&#x26FD; Fuel Pump Finder &#x26FD;</h1>", unsafe_allow_html=True)
 
+    
     onglets = ["Accueil", "Recherche","Rafraîchir les données (API)"]
     onglet_selectionne = st.sidebar.radio("Navigation", onglets)
 
