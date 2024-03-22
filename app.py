@@ -272,8 +272,7 @@ def accueil():
     carburant_selectionne = st.selectbox("Sélectionner le type de carburant", carburants) 
     
     type_carburant = carburant_selectionne+"_prix"
-    txt = f"Prix moyen du {carburant_selectionne} par régions"
-    st.info(txt)
+    
 
     caption = carburant_selectionne+" (€) / L moyen"
 
@@ -281,6 +280,8 @@ def accueil():
     m = folium.Map(location=[46.603354, 1.888334], zoom_start=6)
     
     if on:
+        txt = f"Prix moyen du {carburant_selectionne} par régions"
+        st.info(txt)
         regions_france = gpd.read_file("regionsChloro.geojson")
         # Regroupement des données de prix des carburants par département et calcul de la moyenne des prix
         df_agg_regions = df.groupby('region').agg({type_carburant: 'mean'}).reset_index()
@@ -305,6 +306,8 @@ def accueil():
         colormap.add_to(m)
 
     else:
+        txt = f"Prix moyen du {carburant_selectionne} par départements"
+        st.info(txt)
         departements_france = gpd.read_file("departementsChloro.geojson")
         df_agg_departements = df.groupby('departement').agg({type_carburant: 'mean'}).reset_index()
         df_agg_departements.rename(columns={'departement': 'nom'}, inplace=True)
