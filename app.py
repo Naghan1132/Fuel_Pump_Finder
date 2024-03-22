@@ -17,6 +17,7 @@ import geopandas as gpd
 from geopy.distance import geodesic
 import geocoder
 import requests
+import numpy as np
 
 # Fonction pour géocoder une adresse et obtenir ses coordonnées
 def geocoder_adresse(adresse):
@@ -295,7 +296,7 @@ def accueil():
         folium.GeoJson(
             gdf_regions,
             style_function=lambda feature: {
-                'fillColor': colormap(feature['properties'][type_carburant]),
+                'fillColor': get_color(feature['properties'][type_carburant],colormap),
                 'color': 'black',
                 'weight': 1,
                 'fillOpacity': 0.7
@@ -321,19 +322,24 @@ def accueil():
         folium.GeoJson(
             gdf_dep,
             style_function=lambda feature: {
-                'fillColor': colormap(feature['properties'][type_carburant]),
+                'fillColor': get_color(feature['properties'][type_carburant],colormap),
                 'color': 'black',
                 'weight': 1,
                 'fillOpacity': 0.7
             }
         ).add_to(m)
 
+    
         # Ajouter une légende à la carte
         colormap.add_to(m)
-        
+
     folium_static(m)
         
-
+def get_color(value,colormap):
+    if value is None:
+        return 'gray'  # Couleur grise pour les valeurs None
+    else:
+        return colormap(value)
 
 def main():
     # Titre de l'application
