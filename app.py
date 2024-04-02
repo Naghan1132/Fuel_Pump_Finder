@@ -18,7 +18,7 @@ import geocoder
 import requests
 import numpy as np
 from streamlit_geolocation import streamlit_geolocation
-
+import datetime
 
 def get_user_location():
     # Obtenir les coordonnées de la localisation de l'utilisateur
@@ -78,39 +78,76 @@ def charger_donnees(carburant):
     return df
 
 def update_data():
-    with st.spinner("Récupération en cours..."):
-        # Téléchargement des données JSON depuis l'URL
-        url = "https://www.data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/exports/csv"
+    col1, col2 = st.columns(2)  # Diviser en deux colonnes
+    with col1:
+        # Ajouter le premier bouton avec son action associée
+        if st.button("Update les dernières données"):
+            with st.spinner("Récupération en cours..."):
+                # Téléchargement des données JSON depuis l'URL
+                url = "https://www.data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/exports/csv"
+                
+                response = requests.get(url)
 
-        response = requests.get(url)
+                if response.status_code == 200:
+                    res = response.content.decode('utf-8-sig')
+                    with open("prix_carburants.csv", "w", encoding="utf-8") as f:
+                        f.write(res)
 
-        if response.status_code == 200:
-            res = response.content.decode('utf-8-sig')
-            with open("prix_carburants.csv", "w", encoding="utf-8") as f:
-                f.write(res)
+                    df = pd.read_csv("prix_carburants.csv", sep=';')
 
-            df = pd.read_csv("prix_carburants.csv", sep=';')
+                    df["adresse_complete"] = df["adresse"] + ", " + df["ville"] + ", "+df["code_departement"]
 
-            df[['latitude', 'longitude']] = df['geom'].str.split(', ', expand=True)
+                    df[['latitude', 'longitude']] = df['geom'].str.split(', ', expand=True)
 
-            # Supprimer les lignes où la valeur de la colonne "prix" est None => "station de gonflage etc..." => pas de carburant
-            df = df.dropna(subset=['prix'])
+                    # Obtenir la date et l'heure actuelles
+                    maintenant = datetime.datetime.now()
+                    date_formattee = maintenant.strftime("%Y-%m-%d %H:%M")
 
-            df.to_csv("prix_carburants.csv",sep=";")
+                    df["date"] = date_formattee
 
-            # Connexion à la base de données SQLite (créera un nouveau fichier de base de données s'il n'existe pas)
-            conn = sqlite3.connect("data.db")
+                    # Supprimer les lignes où la valeur de la colonne "prix" est None => "station de gonflage etc..." => pas de carburant
+                    df = df.dropna(subset=['prix'])
 
-            # Créer une table dans la base de données à partir du DataFrame pandas
-            df.to_sql("prix_carburants", conn, if_exists="replace", index=False)
-            
+                    #df.to_csv("prix_carburants.csv",sep=";")
+
+                    conn = sqlite3.connect("data.db")
+
+                    df.to_sql("prix_carburants", conn, if_exists="append", index=False)  # append or replace
+                    
+                    conn.close()
+
+                    msg = f"Vous disposez des dernières ({len(df)}) données :white_check_mark:"
+                    st.success(msg)
+                else:
+                    st.write("Erreur lors du refresh des données")
+
+    with col2:
+        if st.button("Supprimer toute la base"):
+            conn = sqlite3.connect('data.db')
+            cursor = conn.cursor()
+
+            # Obtention de la liste des tables dans la base de données
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+
+            # Suppression de chaque table
+            for table in tables:
+                table_name = table[0]
+                cursor.execute(f"DROP TABLE IF EXISTS {table_name};")
+                msg = f"La table {table_name} a été supprimée :white_check_mark:"
+                st.success(msg)
+
+            # Valider les modifications et fermer la connexion
+            conn.commit()
             conn.close()
 
-            msg = f"Vous disposez des dernières ({len(df)}) données :white_check_mark:"
-            st.success(msg)
-            
-        else:
-            st.write("Erreur lors du refresh des données")
+    # conn = sqlite3.connect("data.db")
+    # query = "SELECT * FROM prix_carburants"
+    # df = pd.read_sql_query(query, conn)
+
+    # if len(df) > 0:
+    #     st.write(df.head())
+
 
 
 
@@ -121,7 +158,6 @@ def recherche():
 
     with col1:
         carburant_selectionne = st.selectbox("Sélectionner le type de carburant", carburants) 
-        #Charger les données en fonction des filtres sélectionnés
         donnees = charger_donnees(carburant_selectionne)
     
     with col2:
@@ -227,7 +263,6 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
     
 
 
-
 def accueil():
     conn = sqlite3.connect("data.db")
     query = "SELECT * FROM prix_carburants"
@@ -237,7 +272,13 @@ def accueil():
     # Fermer la connexion à la base de données
     conn.close()
 
-    st.write("Nombre de stations dans la base :",len(df))
+    col1, col2 = st.columns(2)  # Diviser en deux colonnes
+
+    with col1:
+        st.write("Nombre de lignes dans la base :",len(df))
+    with col2:
+        nombre_valeurs_distinctes = df['adresse_complete'].nunique()
+        st.write("Nombre de stations dans la base :",nombre_valeurs_distinctes)
 
     # Calcul des prix moyens de chaque type d'essence
     prix_moyen_gazole = df['gazole_prix'].mean()
@@ -262,9 +303,10 @@ def accueil():
     # Affichage du graphique dans Streamlit
     st.pyplot(plt)
 
-    ####### Carte Dep / Region ######
 
-    on = st.toggle('Vue Départements / Régions')
+    
+    ####### Carte Dep / Region ######
+    
 
     #choisir le type carburant 
     carburants = ["gazole","sp95","e85","gplc","e10","sp98"]
@@ -273,16 +315,16 @@ def accueil():
     type_carburant = carburant_selectionne+"_prix"
     
 
-    caption = carburant_selectionne+" (€) / L moyen"
+    caption = carburant_selectionne+" (€ / L) moyen"
 
-     # Création d'une carte Folium centrée sur la France
-    m = folium.Map(location=[46.603354, 1.888334], zoom_start=6)
     
+    # Création d'une carte Folium centrée sur la France
+    m = folium.Map(location=[46.603354, 1.888334], zoom_start=6)
+    on = st.toggle('Vue Départements / Régions')
     if on:
-        txt = f"Prix moyen du {carburant_selectionne} par régions"
-        st.info(txt)
+        #txt = f"Prix moyen du {carburant_selectionne} par régions"
+        #st.info(txt)
         regions_france = gpd.read_file("regionsChloro.geojson")
-        # Regroupement des données de prix des carburants par département et calcul de la moyenne des prix
         df_agg_regions = df.groupby('region').agg({type_carburant: 'mean'}).reset_index()
         df_agg_regions.rename(columns={'region': 'nom'}, inplace=True)
         gdf_regions = pd.merge(regions_france, df_agg_regions, on='nom')
@@ -300,22 +342,20 @@ def accueil():
                 'fillOpacity': 0.7
             }
         ).add_to(m)
-
         # Ajouter une légende à la carte
         colormap.add_to(m)
 
     else:
-        txt = f"Prix moyen du {carburant_selectionne} par départements"
-        st.info(txt)
+        #txt = f"Prix moyen du {carburant_selectionne} par départements"
+        #st.info(txt)
         departements_france = gpd.read_file("departementsChloro.geojson")
         df_agg_departements = df.groupby('departement').agg({type_carburant: 'mean'}).reset_index()
         df_agg_departements.rename(columns={'departement': 'nom'}, inplace=True)
         gdf_dep = pd.merge(departements_france, df_agg_departements, on='nom')
-      
 
         colormap = folium.LinearColormap(colors=['green', 'yellow', 'red'], vmin=gdf_dep[type_carburant].min(), vmax=gdf_dep[type_carburant].max())
         colormap.caption = caption
-       
+    
         # Ajouter les données du GeoDataFrame à la carte avec la couleur définie par les prix du gazole
         folium.GeoJson(
             gdf_dep,
@@ -326,12 +366,30 @@ def accueil():
                 'fillOpacity': 0.7
             }
         ).add_to(m)
-
-    
         # Ajouter une légende à la carte
         colormap.add_to(m)
 
     folium_static(m)
+
+   
+    df_aggregated = df.groupby('date')[type_carburant].mean().reset_index()
+    df_aggregated['date'] = pd.to_datetime(df_aggregated['date'])  # Convertir la colonne de date en format datetime
+
+    # Afficher le DataFrame
+    #st.write(df_aggregated)
+
+    # Tracer le graphique avec Seaborn
+    plt.figure(figsize=(10, 6))
+    sns.lineplot(data=df_aggregated, x='date', y=type_carburant, marker='o')
+    plt.title('Évolution des prix')
+    plt.xlabel('Date')
+    txt = f"Prix moyen {carburant_selectionne} (€ / L)"
+    plt.ylabel(txt)
+    plt.xticks(rotation=45)
+    plt.grid(True)
+    st.pyplot(plt)  # Afficher le graphique dans Streamlit
+
+    
         
 def get_color(value,colormap):
     if value is None:
@@ -342,20 +400,20 @@ def get_color(value,colormap):
 def main():
     # Titre de l'application
     st.markdown("<h1 style='text-align: center;'>&#x26FD; Fuel Pump Finder &#x26FD;</h1>", unsafe_allow_html=True)
-
     
-    onglets = ["Accueil", "Recherche","Rafraîchir les données (API)"]
+    onglets = ["Accueil", "Recherche","Base de données"]
     onglet_selectionne = st.sidebar.radio("Navigation", onglets)
 
     if onglet_selectionne == "Accueil":
         accueil()
     elif onglet_selectionne == "Recherche":
         recherche()
-    elif onglet_selectionne =="Rafraîchir les données (API)":
+    elif onglet_selectionne =="Base de données":
         update_data()
 
+    #asyncio.create_task(fetch_data_periodically(interval, display_data))
 
 if __name__ == "__main__":
     main()
 
-#https://fuel-pump-finder.streamlit.app/
+#https://fuelpumpfinder.streamlit.app/
