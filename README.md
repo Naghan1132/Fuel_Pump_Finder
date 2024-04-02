@@ -28,5 +28,3 @@ Fuel Pump Finder is built using the following technologies:
 - Pandas
 - Seaborn
 - SQLite
-
-## Installation

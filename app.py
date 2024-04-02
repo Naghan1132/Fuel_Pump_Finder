@@ -205,7 +205,7 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
         all_pump = get_nearest_pump(coords_adresse, df,rayon_maximal,carburant)
         nearest_pump = min(all_pump)
 
-        near_dist, near_address,near_carburant,near_point_destination,near_ville = nearest_pump
+        near_dist, near_address,near_carburant,near_point_destination,near_ville,near_full_adress = nearest_pump
         
         # Parcourir le DataFrame et ajouter des marqueurs pour chaque station
         for item in all_pump:
@@ -393,16 +393,12 @@ def accueil():
     plt.grid(True)
     st.pyplot(plt)  # Afficher le graphique dans Streamlit
 
-
-    
         
 def get_color(value,colormap):
     if value is None:
         return 'gray'  # Couleur grise pour les valeurs None
     else:
         return colormap(value)
-
-
 
 
 def main():
