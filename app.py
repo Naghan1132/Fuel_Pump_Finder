@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 import folium
 import geopandas as gpd
 from geopy.distance import geodesic
-import geocoder
 import requests
 import numpy as np
 from streamlit_geolocation import streamlit_geolocation
@@ -54,33 +53,46 @@ def get_nearest_pump(coord_reference, df,rayon_max,carburant):
         type_carburant = carburant+"_prix"
 
         if distance_km <= rayon_max:
-            distances.append((distance_km, row['adresse'], row[type_carburant], coord_pump,row['ville']))
+            distances.append((distance_km, row['adresse'], row[type_carburant], coord_pump,row['ville'],row['adresse_complete']))
     if distances:
         return distances
     else:
         return None
 
 
+def charger_donnees(carburant):
+    conn = sqlite3.connect("data.db")
+    query = f"SELECT * FROM prix_carburants_actuels WHERE {carburant}_prix IS NOT NULL"
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
 
 # Fonction pour charger les données depuis la base SQLite
-def charger_donnees(carburant):
-    # Connexion à la base SQLite
+def charger_donnees2(carburant):
     conn = sqlite3.connect("data.db")
-    
-    query = f"SELECT * FROM prix_carburants WHERE {carburant}_prix IS NOT NULL"
-
+    query = f"""
+    SELECT *
+    FROM prix_carburants_actuels
+    JOIN (
+        SELECT DISTINCT adresse_complete
+        FROM prix_carburants_actuels
+    ) AS adresses_uniques
+    ON prix_carburants_actuels.adresse_complete = adresses_uniques.adresse_complete
+    WHERE {carburant}_prix IS NOT NULL
+    """
     # Exécution de la requête SQL avec les paramètres
     df = pd.read_sql_query(query, conn)
 
     # Fermer la connexion à la base de données
     conn.close()
-
     return df
+
+
 
 def update_data():
     col1, col2 = st.columns(2)  # Diviser en deux colonnes
     with col1:
-        # Ajouter le premier bouton avec son action associée
         if st.button("Update les dernières données"):
             with st.spinner("Récupération en cours..."):
                 # Téléchargement des données JSON depuis l'URL
@@ -112,7 +124,8 @@ def update_data():
 
                     conn = sqlite3.connect("data.db")
 
-                    df.to_sql("prix_carburants", conn, if_exists="append", index=False)  # append or replace
+                    df.to_sql("prix_carburants_historique", conn, if_exists="append", index=False)  # append dans l'historique
+                    df.to_sql("prix_carburants_actuels", conn, if_exists="replace", index=False)  # replace dans la base actuelle
                     
                     conn.close()
 
@@ -122,32 +135,16 @@ def update_data():
                     st.write("Erreur lors du refresh des données")
 
     with col2:
-        if st.button("Supprimer toute la base"):
+        if st.button("Supprimer toute la base actuelle"):
             conn = sqlite3.connect('data.db')
             cursor = conn.cursor()
 
-            # Obtention de la liste des tables dans la base de données
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            tables = cursor.fetchall()
+            cursor.execute(f"DROP TABLE IF EXISTS prix_carburants_actuels;")
+            msg = f"La table prix_carburants_actuels a été supprimée :white_check_mark:"
+            st.success(msg)
 
-            # Suppression de chaque table
-            for table in tables:
-                table_name = table[0]
-                cursor.execute(f"DROP TABLE IF EXISTS {table_name};")
-                msg = f"La table {table_name} a été supprimée :white_check_mark:"
-                st.success(msg)
-
-            # Valider les modifications et fermer la connexion
             conn.commit()
             conn.close()
-
-    # conn = sqlite3.connect("data.db")
-    # query = "SELECT * FROM prix_carburants"
-    # df = pd.read_sql_query(query, conn)
-
-    # if len(df) > 0:
-    #     st.write(df.head())
-
 
 
 
@@ -187,12 +184,10 @@ def recherche():
             afficher_carte(donnees,adresse_utilisateur,rayon_maximal,carburant_selectionne) 
 
 
+
 def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
-    
     m = folium.Map(location=[48.8566, 2.3522], zoom_start=5)
-
     marker_cluster = MarkerCluster().add_to(m)
-
     coords_adresse = geocoder_adresse(adresse_utilisateur)
 
     min_price = float('inf')
@@ -205,6 +200,7 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
     near_carburant=None
     near_point_destination = None
 
+    liste_adresse_distinct = []
     if coords_adresse:
         all_pump = get_nearest_pump(coords_adresse, df,rayon_maximal,carburant)
         nearest_pump = min(all_pump)
@@ -213,12 +209,13 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
         
         # Parcourir le DataFrame et ajouter des marqueurs pour chaque station
         for item in all_pump:
+            full_adress = item[5]
             ville = item[4]
             coord_station = item[3]
             prix_gazole = item[2]
             adresse = item[1]
             dist = item[0]
-
+            
             if prix_gazole < min_price:
                 min_price = prix_gazole
                 min_address = adresse
@@ -226,7 +223,9 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
                 min_dist = dist
 
             # pour ne pas repasser 2 fois sur la station la plus proche
-            if coord_station != (near_point_destination[0], near_point_destination[1]):
+            if coord_station != (near_point_destination[0], near_point_destination[1]) or full_adress not in liste_adresse_distinct:
+                liste_adresse_distinct.append(full_adress)
+
                 lat_station, lon_station = coord_station
                 popup_text = f"Adresse: {adresse}<br>Prix: {prix_gazole}"
                 if len(all_pump) >= 200:
@@ -265,10 +264,13 @@ def afficher_carte(df,adresse_utilisateur,rayon_maximal,carburant):
 
 def accueil():
     conn = sqlite3.connect("data.db")
-    query = "SELECT * FROM prix_carburants"
 
-    # # Exécution de la requête SQL avec les paramètres
+    query = "SELECT * FROM prix_carburants_actuels"
     df = pd.read_sql_query(query, conn)
+   
+    query = "SELECT * FROM prix_carburants_historique"
+    df_h = pd.read_sql_query(query, conn)
+
     # Fermer la connexion à la base de données
     conn.close()
 
@@ -277,8 +279,7 @@ def accueil():
     with col1:
         st.write("Nombre de lignes dans la base :",len(df))
     with col2:
-        nombre_valeurs_distinctes = df['adresse_complete'].nunique()
-        st.write("Nombre de stations dans la base :",nombre_valeurs_distinctes)
+        st.write("Nombre de lignes dans l'historique :",len(df_h))
 
     # Calcul des prix moyens de chaque type d'essence
     prix_moyen_gazole = df['gazole_prix'].mean()
@@ -304,16 +305,14 @@ def accueil():
     st.pyplot(plt)
 
 
-    
+
     ####### Carte Dep / Region ######
-    
 
     #choisir le type carburant 
     carburants = ["gazole","sp95","e85","gplc","e10","sp98"]
     carburant_selectionne = st.selectbox("Sélectionner le type de carburant", carburants) 
     
     type_carburant = carburant_selectionne+"_prix"
-    
 
     caption = carburant_selectionne+" (€ / L) moyen"
 
@@ -322,8 +321,6 @@ def accueil():
     m = folium.Map(location=[46.603354, 1.888334], zoom_start=6)
     on = st.toggle('Vue Départements / Régions')
     if on:
-        #txt = f"Prix moyen du {carburant_selectionne} par régions"
-        #st.info(txt)
         regions_france = gpd.read_file("regionsChloro.geojson")
         df_agg_regions = df.groupby('region').agg({type_carburant: 'mean'}).reset_index()
         df_agg_regions.rename(columns={'region': 'nom'}, inplace=True)
@@ -371,23 +368,31 @@ def accueil():
 
     folium_static(m)
 
-   
+    
+    conn = sqlite3.connect("data.db")
+    query = "SELECT * FROM prix_carburants_historique"
+
+    # # Exécution de la requête SQL avec les paramètres
+    df = pd.read_sql_query(query, conn)
+    # Fermer la connexion à la base de données
+    conn.close()
+
+
     df_aggregated = df.groupby('date')[type_carburant].mean().reset_index()
     df_aggregated['date'] = pd.to_datetime(df_aggregated['date'])  # Convertir la colonne de date en format datetime
 
-    # Afficher le DataFrame
-    #st.write(df_aggregated)
-
-    # Tracer le graphique avec Seaborn
+    # # Tracer le graphique avec Seaborn
     plt.figure(figsize=(10, 6))
     sns.lineplot(data=df_aggregated, x='date', y=type_carburant, marker='o')
-    plt.title('Évolution des prix')
+    txt = f"Évolution des prix du {carburant_selectionne}"
+    plt.title(txt)
     plt.xlabel('Date')
-    txt = f"Prix moyen {carburant_selectionne} (€ / L)"
+    txt = f"Prix moyen (€ / L)"
     plt.ylabel(txt)
     plt.xticks(rotation=45)
     plt.grid(True)
     st.pyplot(plt)  # Afficher le graphique dans Streamlit
+
 
     
         
@@ -396,6 +401,9 @@ def get_color(value,colormap):
         return 'gray'  # Couleur grise pour les valeurs None
     else:
         return colormap(value)
+
+
+
 
 def main():
     # Titre de l'application
@@ -411,7 +419,6 @@ def main():
     elif onglet_selectionne =="Base de données":
         update_data()
 
-    #asyncio.create_task(fetch_data_periodically(interval, display_data))
 
 if __name__ == "__main__":
     main()
